@@ -2,8 +2,6 @@
 
 <img alt="StutterBegone" src="stutter-begone.png" width="300px" />
 
-# StutterBegone
-
 Fixes stuttering when sweeping your mouse over shelves and other items in TCG Card Shop Simulator.
 
 </div>
@@ -55,9 +53,9 @@ Screens listed in `ExcludeNames` are left on the shared canvas.
 Some mods build overlays at runtime (e.g. `Binder Overhaul`'s filter/sort modal). These new
 canvases land **below** the reparented screens (which sit at `BaseSortingOrder`+), so the mod's
 UI ends up hidden behind a screen. Set a key in `RescanCanvasesKey` (no default) and press it
-to scan for new top-level canvases created after the split and shift each to `BaseSortingOrder
-+ (top-level child count) + its own sortingOrder`, which lands it above all our screens while
-preserving the relative order among mod-created canvases.
+to scan for new top-level canvases created after the split and shift each to
+`BaseSortingOrder + (top-level child count) + its own sortingOrder`, which lands it above all our
+screens while preserving the relative order among mod-created canvases.
 
 ## Config (`BepInEx/config/hecrj.stutter.begone.cfg`)
 
