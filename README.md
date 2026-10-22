@@ -53,9 +53,9 @@ Screens listed in `ExcludeNames` are left on the shared canvas.
 Some mods build overlays at runtime (e.g. `Binder Overhaul`'s filter/sort modal). These new
 canvases land **below** the reparented screens (which sit at `BaseSortingOrder`+), so the mod's
 UI ends up hidden behind a screen. Set a key in `RescanCanvasesKey` (no default) and press it
-to scan for new top-level canvases created after the split and shift each to `BaseSortingOrder
-+ (number of screens we placed) + its own sortingOrder`, which lands it above all our screens
-while preserving the relative order among mod-created canvases.
+to scan for new top-level canvases created after the split and shift each to
+`BaseSortingOrder + (number of screens we placed) + its own sortingOrder`, which lands it above all our
+screens while preserving the relative order among mod-created canvases.
 
 ## Config (`BepInEx/config/dr.eldon.stutter.begone.cfg`)
 
