@@ -3,6 +3,7 @@
 # Produces:  StutterBegone-<version>.zip  (in the out folder)
 #               BepInEx/plugins/StutterBegone/StutterBegone.dll
 #               BepInEx/plugins/StutterBegone/README.md
+#               BepInEx/plugins/StutterBegone/CHANGELOG.md
 #
 # The version is read from the [BepInPlugin] attribute in Plugin.cs.
 # The game dir defaults to Directory.Build.props; override with $env:GameDir.
@@ -46,6 +47,7 @@ $pkg   = Join-Path $stage 'BepInEx/plugins/StutterBegone'
 New-Item -ItemType Directory -Path $pkg -Force | Out-Null
 Copy-Item (Join-Path 'out' 'StutterBegone.dll') $pkg
 Copy-Item 'README.md' $pkg
+Copy-Item 'CHANGELOG.md' $pkg
 
 # --- package ---
 if (Test-Path $zip) { Remove-Item $zip }
