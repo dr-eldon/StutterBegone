@@ -36,10 +36,6 @@
       <HintPath>$(GameDir)\BepInEx\core\BepInEx.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="EnhancedPrefabLoader.API">
-      <HintPath>$(GameDir)\BepInEx\plugins\EnhancedPrefabLoader.API\EnhancedPrefabLoader.API.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
   </ItemGroup>
 
 </Project>

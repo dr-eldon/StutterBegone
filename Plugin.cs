@@ -5,8 +5,8 @@ using System.Diagnostics;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
-using EnhancedPrefabLoader.API;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace StutterBegone
@@ -34,41 +34,51 @@ namespace StutterBegone
     /// (reparent everything); add a name there if a screen breaks (e.g. one a mod locates by
     /// path or a direct-child Transform.Find that runs at runtime).
     ///
-    /// This plugin makes no Harmony patches. It runs once per scene load.
+    /// This plugin makes no Harmony patches. It triggers on the shop scene load
+    /// (SceneManager.sceneLoaded; the shop scene is named "Start", the menu/boot scene is
+    /// skipped) and runs once per scene load; the split is idempotent, so a re-load (or an
+    /// additive scene load) is a safe no-op on already-split screens.
     /// </summary>
-    // EPL is a soft dependency: if it's installed it loads first (so Epl.IsAvailable is true
-    // when we run); if it's missing we still load and fall back to canvas-size heuristics.
-    [BepInDependency("EnhancedPrefabLoader", BepInDependency.DependencyFlags.SoftDependency)]
     [BepInPlugin("dr.eldon.stutter.begone", "StutterBegone", "1.3.0")]
     public class Plugin : BaseUnityPlugin
     {
         private ConfigEntry<bool> _enabled;
         private ConfigEntry<bool> _verbose;
-        private ConfigEntry<string> _giantName;
         private ConfigEntry<string> _exclude;
         private ConfigEntry<int> _delayFrames;
         private ConfigEntry<int> _baseSortOrder;
-        private ConfigEntry<int> _probeInterval;
-        private ConfigEntry<int> _settleFrames;
-        private ConfigEntry<int> _maxWaitFrames;
-        private ConfigEntry<int> _minTotalCR;
-        private ConfigEntry<bool> _useEplSignal;
         private ConfigEntry<KeyCode> _rescanKey;
 
         private Canvas _giant;
         // Canvas watcher state: ourMaxSort = first sortingOrder slot above ALL our
-        // reparented screens (= BaseSortingOrder + totalTopLevelChildren). New runtime
-        // canvases are shifted to ourMaxSort + their own sortingOrder (preserves relative order).
+        // reparented screens. New runtime canvases are shifted to ourMaxSort + their own
+        // sortingOrder (preserves relative order). Monotonic: only ever grows, so a re-split
+        // (same canvas) never pushes the baseline back down.
         private int _ourMaxSort;
         private HashSet<GameObject> _knownCanvases;
-        private bool _bundleComplete;
-        private bool _eplSubscribed;
         private HashSet<string> _excluded = new HashSet<string>(StringComparer.Ordinal);
+
+        // Idempotent-split state (per giant-canvas instance). _screenSort gives each screen a
+        // stable sortingOrder so re-splits never collide; _nextSortIndex only grows. Both are
+        // reset when the giant canvas is recreated (a new scene load).
+        private Canvas _splitCanvas;
+        private int _nextSortIndex;
+        private readonly Dictionary<Transform, int> _screenSort = new Dictionary<Transform, int>();
 
         // Default: reparent EVERYTHING (empty exclude list). If a screen breaks (a mod
         // locates it by path, or a direct-child Transform.Find that runs at runtime), add
         // its name to ExcludeNames.
         private static readonly string DefaultExcludes = string.Empty;
+
+        // The shared UI canvas is named "Canvas" in this game. Used as the primary (precise)
+        // signal when locating it; a most-top-level-children heuristic is the fallback if the
+        // name is ever changed.
+        private const string GiantCanvasDefaultName = "Canvas";
+
+        // The shop/game scene is named "Start". The menu/boot scene's name is unreliable
+        // (observed as both "" and "Title" across runs), so we identify the shop by its
+        // consistent name rather than trying to detect the menu.
+        private const string ShopSceneName = "Start";
 
         private void Awake()
         {
@@ -78,9 +88,6 @@ namespace StutterBegone
             _verbose = Config.Bind("General", "Verbose", false,
                 "Log detailed debug output (per-screen reparenting, canvas census, build progress, " +
                 "rescan details). Off = only errors and warnings are logged.");
-
-            _giantName = Config.Bind("General", "GiantCanvasName", "Canvas",
-                "Name of the shared UI canvas to split. Falls back to the canvas with the most CanvasRenderers if not found by name.");
 
             _exclude = Config.Bind("General", "ExcludeNames", DefaultExcludes,
                 "Comma-separated screen names to leave on the shared canvas (NOT reparented). " +
@@ -95,33 +102,45 @@ namespace StutterBegone
                 "BaseSortingOrder + its original sibling index, which preserves the original " +
                 "layering. Keep it above the shared canvas (0).");
 
-            _probeInterval = Config.Bind("General", "ProbeInterval", 30,
-                "Frames between canvas-size samples while waiting for the UI to finish building. " +
-                "Higher = fewer (cheaper) samples, slower to detect stability.");
-
-            _settleFrames = Config.Bind("General", "SettleFrames", 240,
-                "How long (frames) the canvas element count must be unchanged before it is considered " +
-                "fully built and safe to split.");
-
-            _maxWaitFrames = Config.Bind("General", "MaxWaitFrames", 900,
-                "Give up waiting for stability after this many frames and split anyway.");
-
-            _minTotalCR = Config.Bind("General", "MinTotalCanvasRenderers", 5000,
-                "The shared canvas must reach at least this many CanvasRenderers before it is considered " +
-                "built (guards against splitting a canvas that never grows).");
-
-            _useEplSignal = Config.Bind("General", "UseEplSignal", true,
-                "Use EPL's OnBundleLoadingComplete event to know when content loading finishes " +
-                "(recommended; handles the long loading screen). False = fall back to canvas-size heuristics.");
-
             _rescanKey = Config.Bind("General", "RescanCanvasesKey", KeyCode.None,
                 "Key to press to rescan for new runtime canvases (e.g. a mod's overlay/modal) " +
                 "and shift them above the reparented screens so they stay on top. No default; " +
                 "set a key to enable the rescan.");
 
             ParseExcludes();
-            StartCoroutine(WaitForScene());
-            Logger.LogInfo($"[StutterBegone] loaded (Enabled={_enabled.Value}, Verbose={_verbose.Value}, Giant='{_giantName.Value}', EplSignal={_useEplSignal.Value}, RescanKey={_rescanKey.Value}, Exclude=[{_exclude.Value}])");
+            SceneManager.sceneLoaded += OnSceneLoaded;
+            // Hot case: we may Awake after a game scene already loaded (the boot/menu scene's
+            // sceneLoaded fires before BepInEx runs our Awake). If we're already in the shop
+            // scene, trigger now; otherwise the event below catches the next shop-scene load.
+            var active = SceneManager.GetActiveScene();
+            if (IsShopScene(active))
+                StartCoroutine(RunSplit(active));
+            Logger.LogInfo($"[StutterBegone] loaded (Enabled={_enabled.Value}, Verbose={_verbose.Value}, scene-triggered, RescanKey={_rescanKey.Value}, Exclude=[{_exclude.Value}])");
+        }
+
+        private void OnDestroy()
+        {
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+        }
+
+        // Trigger on the shop scene load. Only the shop scene (named "Start") is split; the
+        // menu/boot scene (named "" or "Title") is skipped. The shop screens are eager scene
+        // objects present as soon as the scene loads, so this is the consistent trigger - no
+        // content-loading wait required. The split is idempotent, so re-loads (new day,
+        // loading a save) are safe no-ops.
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            if (!_enabled.Value) return;
+            if (!IsShopScene(scene)) return;
+            StartCoroutine(RunSplit(scene));
+        }
+
+        // Only the shop/game scene is split. It is consistently named "Start"; the menu/boot
+        // scene is named "" or "Title" (unreliable), so we match the shop positively instead of
+        // trying to detect the menu.
+        private static bool IsShopScene(Scene scene)
+        {
+            return scene.name == ShopSceneName;
         }
 
         private void ParseExcludes()
@@ -142,131 +161,35 @@ namespace StutterBegone
             if (_verbose.Value) Logger.LogInfo(message);
         }
 
-        private IEnumerator WaitForScene()
+        // Runs once per shop-scene load (event-triggered; see OnSceneLoaded / the Awake hot case).
+        // Waits a short grace so other mods finish initializing, finds the giant canvas, and splits
+        // it. The split is idempotent, so re-running on a re-load (or an additive scene load) is a
+        // safe no-op on already-split screens.
+        private IEnumerator RunSplit(Scene scene)
         {
-                // NOTE: the loading/base canvas is DESTROYED and replaced when the game
-                // transitions to the shop scene (shortly after EPL's OnBundleLoadingComplete).
-                // So we never trust a cached canvas reference - we re-find it every probe and
-                // guard against it being gone. _giant is only a convenience cache.
+            for (int i = 0; i < Mathf.Max(0, _delayFrames.Value); i++) yield return null;
 
-                // Phase 1: wait for the game to be up (a canvas exists).
-                while (FindGiantCanvas() == null) yield return null;
-
-                if (!_enabled.Value)
-                {
-                    Logger.LogInfo($"[StutterBegone] disabled (Enabled={_enabled.Value}) - doing nothing.");
-                    yield break;
-                }
-
-                for (int i = 0; i < Mathf.Max(0, _delayFrames.Value); i++) yield return null;
-
-                // Phase 2a: wait for CONTENT LOADING to finish (the long loading screen).
-                // EPL fires OnBundleLoadingComplete (hot/cold) when the bundles finish loading.
-                bool loadingDone = false;
-                int aFrame = 0, aHardCap = Mathf.Max(60, _maxWaitFrames.Value * 6);
-                while (!loadingDone)
-                {
-                    yield return null;
-                    aFrame++;
-                    if (_useEplSignal.Value && !_eplSubscribed && aFrame % 10 == 0)
-                    {
-                        if (TrySubscribeBundleComplete())
-                        {
-                            _eplSubscribed = true;
-                            LogInfo("[StutterBegone] subscribed to EPL OnBundleLoadingComplete (hot/cold).");
-                        }
-                    }
-                    if (_bundleComplete)
-                    {
-                        loadingDone = true;
-                        LogInfo($"[StutterBegone] EPL OnBundleLoadingComplete fired (frame {aFrame}) - content loaded.");
-                    }
-                    else if (!_useEplSignal.Value && aFrame % 30 == 0)
-                    {
-                        var g = FindGiantCanvas();
-                        if (g != null && CountCR(g) >= _minTotalCR.Value)
-                        {
-                            loadingDone = true;
-                            LogInfo("[StutterBegone] no EPL signal; canvas reached threshold - assuming content loaded.");
-                        }
-                    }
-                }
-
-                // Phase 2b: wait until the REAL canvas is FULLY built. After the event the game
-                // switches to the shop scene (old canvas destroyed, new one created), and the
-                // shop panels are added, growing it from ~2k to ~144k. Re-find every probe.
-                int lastCR = -1, lastCC = -1, lastChangeFrame = 0, frame = 0;
-                int maxWait = Mathf.Max(1, _maxWaitFrames.Value);
-                int probe = Mathf.Max(1, _probeInterval.Value);
-                while (frame < maxWait)
-                {
-                    yield return null;
-                    frame++;
-                    _giant = FindGiantCanvas();
-                    if (_giant == null) continue;   // canvas gone during scene transition; wait
-                    int cc = _giant.transform.childCount;                    // cheap (O(1))
-                    int cr = (frame % probe == 0) ? CountCR(_giant) : lastCR; // expensive, throttled
-                    if (frame % probe == 0 && (cr != lastCR || cc != lastCC))
-                    {
-                        LogInfo($"[StutterBegone]   building: children {lastCC}->{cc}, CanvasRenderers {lastCR}->{cr}");
-                        lastCR = cr; lastCC = cc; lastChangeFrame = frame;
-                    }
-                    else if (cc != lastCC)
-                    {
-                        lastCC = cc; lastChangeFrame = frame;
-                    }
-                    if (lastCR >= _minTotalCR.Value && (frame - lastChangeFrame) >= _settleFrames.Value)
-                        break;
-                }
-                if (frame >= maxWait)
-                    Logger.LogWarning($"[StutterBegone] settle wait hit max ({maxWait}f, CR={lastCR}); splitting anyway.");
-
-                _giant = FindGiantCanvas();
-                if (_giant == null)
-                {
-                    Logger.LogError("[StutterBegone] canvas not found at split time - aborting.");
-                    yield break;
-                }
-
-                try
-                {
-                    ParseExcludes();
-                    LogCensus("BEFORE");
-                    ApplySplit();
-                    LogCensus("AFTER");
-                }
-                catch (Exception e)
-                {
-                    Logger.LogError("[StutterBegone] split failed: " + e);
-                }
+            _giant = FindGiantCanvas();
+            if (_giant == null)
+            {
+                Logger.LogWarning($"[StutterBegone] shop scene '{scene.name}' loaded but the giant canvas was not found - skipping.");
                 yield break;
-        }
+            }
 
-        /// <summary>
-        /// Subscribes to EPL's OnBundleLoadingComplete (linked directly, per the EPL guide).
-        /// The event is hot/cold - it fires immediately if loading already finished. Returns
-        /// true once subscribed. If EPL (or its API assembly) is not installed, returns false
-        /// and the plugin falls back to canvas-size heuristics.
-        /// </summary>
-        private bool TrySubscribeBundleComplete()
-        {
+            LogInfo($"[StutterBegone] splitting on scene '{scene.name}': canvas '{_giant.gameObject.name}' " +
+                    $"(children={_giant.transform.childCount}, active={_giant.gameObject.activeInHierarchy})");
+
             try
             {
-                if (!Epl.IsAvailable) return false;
-                Epl.Api.Events.OnBundleLoadingComplete += () => _bundleComplete = true;
-                return true;
+                ParseExcludes();
+                LogCensus("BEFORE");
+                ApplySplit();
+                LogCensus("AFTER");
             }
             catch (Exception e)
             {
-                // EPL API assembly not resolvable (EPL not installed) or other error.
-                Logger.LogWarning("[StutterBegone] EPL API unavailable: " + e.Message);
-                return false;
+                Logger.LogError("[StutterBegone] split failed: " + e);
             }
-        }
-
-        private static int CountCR(Canvas c)
-        {
-            return c.GetComponentsInChildren<CanvasRenderer>(true).Length;
         }
 
         /// <summary>
@@ -328,22 +251,35 @@ namespace StutterBegone
             }
         }
 
+        // Find the shared canvas robustly. The screens are eager scene objects, so the canvas
+        // exists as soon as the shop scene loads. Resolution order:
+        //   (1) The canvas we already split, if it still exists - it IS the giant. This matters
+        //       after a split: the giant then has few/zero top-level children (they moved onto
+        //       per-screen canvases) while each per-screen canvas has one, so a blind re-scan
+        //       could pick a wrong canvas on a later scan (e.g. an additive scene load).
+        //   (2) Name match "Canvas" among ALL canvases, including INACTIVE ones (phone closed) -
+        //       GameObject.Find (active-only) would miss the inactive giant.
+        //   (3) Fallback: the canvas hosting the most top-level children (the shared canvas holds
+        //       every shop screen as a direct child - stable under mod content changes and
+        //       MSPF's panel pooling; a CanvasRenderer count is not).
         private Canvas FindGiantCanvas()
         {
-            var go = GameObject.Find(_giantName.Value);
-            if (go != null)
+            if (_splitCanvas != null)
+                return _splitCanvas;
+
+            Canvas[] all = FindObjectsOfType<Canvas>(true);
+            for (int i = 0; i < all.Length; i++)
             {
-                var c = go.GetComponent<Canvas>();
-                if (c != null) return c;
+                if (all[i] != null && all[i].gameObject.name == GiantCanvasDefaultName)
+                    return all[i];
             }
-            // fallback: the canvas with the most CanvasRenderers
-            Canvas[] all = FindObjectsOfType<Canvas>();
-            Canvas best = null; int bestCR = -1;
+            Canvas best = null; int bestCC = -1, bestCR = -1;
             for (int i = 0; i < all.Length; i++)
             {
                 if (all[i] == null) continue;
+                int cc = all[i].transform.childCount;
                 int cr = all[i].GetComponentsInChildren<CanvasRenderer>(true).Length;
-                if (cr > bestCR) { bestCR = cr; best = all[i]; }
+                if (cc > bestCC || (cc == bestCC && cr > bestCR)) { best = all[i]; bestCC = cc; bestCR = cr; }
             }
             return best;
         }
@@ -351,6 +287,20 @@ namespace StutterBegone
         private void ApplySplit()
         {
             if (_giant == null) return;
+
+            // Detect a recreated canvas (a scene load destroyed the old one) and reset the
+            // per-canvas idempotency state. Same canvas (re-split) keeps its state so sorts stay
+            // stable and ourMaxSort only ever grows.
+            bool freshCanvas = _splitCanvas == null || _giant != _splitCanvas;
+            if (freshCanvas)
+            {
+                _splitCanvas = _giant;
+                _nextSortIndex = 0;
+                _screenSort.Clear();
+                _ourMaxSort = 0;
+                _knownCanvases = new HashSet<GameObject>();
+            }
+
             int n = _giant.transform.childCount;
             // Snapshot the children BEFORE reparenting: moving a child out of the shared canvas
             // changes childCount/GetChild, so we iterate a fixed copy.
@@ -362,9 +312,9 @@ namespace StutterBegone
             int moved = 0, skippedExcl = 0;
 
             // Reparent EVERY top-level child (except ExcludeNames) onto its own canvas.
-            // sortingOrder = base + original sibling index preserves the exact original
-            // layering (z-order): an overlay in front of a screen (higher sibling index) stays
-            // in front of it after both are moved.
+            // Each screen gets a STABLE sortingOrder (base + a monotonically increasing index)
+            // so a re-split never collides with an earlier assignment. On a fresh canvas the
+            // index equals the sibling order, which preserves the original z-order.
             for (int j = 0; j < n; j++)
             {
                 var t = children[j];
@@ -376,7 +326,12 @@ namespace StutterBegone
                     continue;
                 }
                 int cr = t.GetComponentsInChildren<CanvasRenderer>(true).Length;
-                int sortOrder = baseSort + j;
+                int sortOrder;
+                if (!_screenSort.TryGetValue(t, out sortOrder))
+                {
+                    sortOrder = baseSort + _nextSortIndex++;
+                    _screenSort[t] = sortOrder;
+                }
 
                 if (t.gameObject.activeInHierarchy)
                     LogInfo($"[StutterBegone]   NOTE: '{t.name}' is ACTIVE while being split (may cause a one-frame visual blip).");
@@ -385,13 +340,13 @@ namespace StutterBegone
                 moved++;
             }
 
-            Logger.LogInfo($"[StutterBegone] done: moved={moved} skippedExcluded={skippedExcl}");
+            Logger.LogInfo($"[StutterBegone] done: moved={moved} skippedExcluded={skippedExcl} (canvas '{_giant.gameObject.name}', fresh={freshCanvas})");
 
-            // Watch for NEW root canvases created at runtime (e.g. a mod's modal) and shift
-            // them above all our reparented screens, preserving their relative order:
-            //   newSort = BaseSortingOrder + totalTopLevelChildren + canvas.sortingOrder
-            _ourMaxSort = _baseSortOrder.Value + n;
-            _knownCanvases = new HashSet<GameObject>();
+            // Monotonic baseline for the canvas watcher: first sortingOrder slot above ALL our
+            // screens. Only ever grows (never resets downward), so new runtime canvases are
+            // always shifted above everything we have placed.
+            _ourMaxSort = Mathf.Max(_ourMaxSort, baseSort + _nextSortIndex);
+            // (Re)baseline the known canvases (union: add any new ones; a fresh canvas already reset).
             foreach (var c in FindObjectsOfType<Canvas>())
                 if (c != null) _knownCanvases.Add(c.gameObject);
             LogInfo($"[StutterBegone] canvas watcher armed (ourMaxSort={_ourMaxSort}, known={_knownCanvases.Count} canvases at split); press '{_rescanKey.Value}' to rescan");

@@ -53,33 +53,28 @@ Screens listed in `ExcludeNames` are left on the shared canvas.
 Some mods build overlays at runtime (e.g. `Binder Overhaul`'s filter/sort modal). These new
 canvases land **below** the reparented screens (which sit at `BaseSortingOrder`+), so the mod's
 UI ends up hidden behind a screen. Set a key in `RescanCanvasesKey` (no default) and press it
-to scan for new top-level canvases created after the split and shift each to
-`BaseSortingOrder + (top-level child count) + its own sortingOrder`, which lands it above all our
-screens while preserving the relative order among mod-created canvases.
+to scan for new top-level canvases created after the split and shift each to `BaseSortingOrder
++ (number of screens we placed) + its own sortingOrder`, which lands it above all our screens
+while preserving the relative order among mod-created canvases.
 
 ## Config (`BepInEx/config/dr.eldon.stutter.begone.cfg`)
 
 | Key | Default | Meaning |
 |---|---|---|
 | `Enabled` | `true` | Master switch. |
-| `GiantCanvasName` | `Canvas` | The shared canvas to split (falls back to the biggest canvas). |
+| `Verbose` | `false` | Log detailed debug output (per-screen reparenting, canvas census, rescan details). Off = only errors and warnings. |
 | `ExcludeNames` | *(empty)* | Comma-separated screen names to leave on the shared canvas. Empty = reparent everything. Add a name here if a screen breaks. |
-| `ApplyDelayFrames` | `10` | Extra frames to wait after the canvas is found, before the settle wait begins. |
-| `BaseSortingOrder` | `100` | Base `sortingOrder`; each moved screen gets this + its original sibling index. |
-| `ProbeInterval` | `30` | Frames between canvas-size samples while waiting for the UI to finish building. |
-| `SettleFrames` | `240` | How long the element count must be unchanged before splitting. |
-| `MaxWaitFrames` | `900` | Give up the settle wait after this and split anyway (also scales the loading-done hard cap). |
-| `MinTotalCanvasRenderers` | `5000` | The canvas must reach this many CanvasRenderers before it counts as "built". |
-| `UseEplSignal` | `true` | Use EPL's `OnBundleLoadingComplete` event to detect the end of loading. |
+| `ApplyDelayFrames` | `10` | Frames to wait after the shop scene loads (before splitting). Lets other mods finish initializing. |
+| `BaseSortingOrder` | `100` | Base `sortingOrder`; each moved screen gets this + a per-screen index (original sibling order on the first split; stable across re-splits). |
 | `RescanCanvasesKey` | `None` | Key to press to rescan for new runtime canvases (e.g. a mod's overlay/modal) and shift them above the reparented screens. No default; set a key to enable. |
 
-> **Timing (two gates).** The loading screen can last well over 15 s; during it the shared
-> canvas only holds the base UI. The plugin waits for (1) EPL's `OnBundleLoadingComplete`
-> (hot/cold, linked directly to `EnhancedPrefabLoader.API` per the EPL guide; falls back to
-> canvas size if no EPL) and then (2) the element
-> count to **settle** (unchanged for `SettleFrames`), because the shop panels are added after
-> loading. Log: `subscribed to EPL OnBundleLoadingComplete` → `EPL OnBundleLoadingComplete
-> fired` → `building: …` → `CENSUS BEFORE` / `CENSUS AFTER`.
+> **Trigger (scene-based).** The plugin triggers on the shop scene load
+> (`SceneManager.sceneLoaded`), matching the shop scene by its name `Start` (the menu/boot
+> scene is skipped), waits `ApplyDelayFrames`, then splits. It no longer waits for a
+> content-loading signal or a canvas-size settle window, because the screens are eager scene
+> objects present as soon as the scene loads. The split is idempotent, so it re-runs safely
+> whenever the shop scene (re)loads (new day, loading a save) — already-split screens are a
+> no-op. Log: `splitting on scene '…'` → `CENSUS BEFORE` / `CENSUS AFTER`.
 
 ## Known reference constraints (why you may need to exclude a screen)
 
@@ -107,10 +102,3 @@ Delete `BepInEx/plugins/StutterBegone/`. No game or mod files are modified.
 dotnet build -c Release -p:GameDir="C:/path/to/TCG Card Shop Simulator" -o out
 ```
 Deploy `out/StutterBegone.dll` to `BepInEx/plugins/StutterBegone/`.
-
-## EPL dependency
-
-This plugin links `EnhancedPrefabLoader.API.dll` (per the [EPL guide](https://prefabloader-187e53.gitlab.io/index.html))
-and declares EPL as a **soft dependency** (`[BepInDependency("EnhancedPrefabLoader", SoftDependency)]`).
-It uses `Epl.Api.Events.OnBundleLoadingComplete` to time the split. If EPL is not installed, the
-plugin still loads and falls back to canvas-size heuristics (the `UseEplSignal` path).

@@ -12,6 +12,19 @@ User-facing changes only. For the full config reference, see [README](README.md)
 - **Added:** `Verbose` option (default off). When on, logs detailed debug output
   (per-screen reparenting, canvas census, build progress, rescan details); when off,
   only errors and warnings are logged.
+- **Changed:** The split now triggers on the shop scene load (`SceneManager.sceneLoaded`,
+  matching the shop scene by its name `Start`; the menu/boot scene is skipped) instead of
+  waiting for a content-loading signal and a canvas-stability window. This is deterministic and
+  consistent, and it re-runs whenever the shop scene (re)loads (a new day, loading a save). The
+  split is now idempotent, so re-running is a safe no-op on already-split screens.
+- **Changed:** No dependency on EPL at all — the plugin neither links EPL's API nor declares a
+  `[BepInDependency]`. The trigger is scene-based, so the mod works with or without EPL.
+- **Changed:** The shared canvas is now located by name (including inactive canvases) with a
+  most-top-level-children fallback, and is cached once found. More robust when the canvas is
+  small (e.g. with Modded Shop Performance Fix) or momentarily inactive.
+- **Removed:** `GiantCanvasName`, `ProbeInterval`, `SettleFrames`, `MaxWaitFrames`,
+  `MinTotalCanvasRenderers`, and `UseEplSignal` config options — the scene-triggered split no
+  longer needs the content-wait heuristics they controlled, or a configurable canvas name.
 
 ## v1.2.0
 
