@@ -43,6 +43,7 @@ namespace StutterBegone
     public class Plugin : BaseUnityPlugin
     {
         private ConfigEntry<bool> _enabled;
+        private ConfigEntry<bool> _verbose;
         private ConfigEntry<string> _giantName;
         private ConfigEntry<string> _exclude;
         private ConfigEntry<int> _delayFrames;
@@ -73,6 +74,10 @@ namespace StutterBegone
         {
             _enabled = Config.Bind("General", "Enabled", true,
                 "Master switch. False = original (single giant canvas) behavior.");
+
+            _verbose = Config.Bind("General", "Verbose", false,
+                "Log detailed debug output (per-screen reparenting, canvas census, build progress, " +
+                "rescan details). Off = only errors and warnings are logged.");
 
             _giantName = Config.Bind("General", "GiantCanvasName", "Canvas",
                 "Name of the shared UI canvas to split. Falls back to the canvas with the most CanvasRenderers if not found by name.");
@@ -116,7 +121,7 @@ namespace StutterBegone
 
             ParseExcludes();
             StartCoroutine(WaitForScene());
-            Logger.LogInfo($"[StutterBegone] v1.2.0 loaded (Enabled={_enabled.Value}, Giant='{_giantName.Value}', EplSignal={_useEplSignal.Value}, RescanKey={_rescanKey.Value}, Exclude=[{_exclude.Value}])");
+            Logger.LogInfo($"[StutterBegone] loaded (Enabled={_enabled.Value}, Verbose={_verbose.Value}, Giant='{_giantName.Value}', EplSignal={_useEplSignal.Value}, RescanKey={_rescanKey.Value}, Exclude=[{_exclude.Value}])");
         }
 
         private void ParseExcludes()
@@ -128,6 +133,13 @@ namespace StutterBegone
                 var s = raw.Trim();
                 if (s.Length > 0) _excluded.Add(s);
             }
+        }
+
+        // Verbose-only logging. Emits only when the Verbose option is on; errors and
+        // genuine warnings are logged unconditionally (those calls are NOT routed through here).
+        private void LogInfo(string message)
+        {
+            if (_verbose.Value) Logger.LogInfo(message);
         }
 
         private IEnumerator WaitForScene()
@@ -161,13 +173,13 @@ namespace StutterBegone
                         if (TrySubscribeBundleComplete())
                         {
                             _eplSubscribed = true;
-                            Logger.LogInfo("[StutterBegone] subscribed to EPL OnBundleLoadingComplete (hot/cold).");
+                            LogInfo("[StutterBegone] subscribed to EPL OnBundleLoadingComplete (hot/cold).");
                         }
                     }
                     if (_bundleComplete)
                     {
                         loadingDone = true;
-                        Logger.LogInfo($"[StutterBegone] EPL OnBundleLoadingComplete fired (frame {aFrame}) - content loaded.");
+                        LogInfo($"[StutterBegone] EPL OnBundleLoadingComplete fired (frame {aFrame}) - content loaded.");
                     }
                     else if (!_useEplSignal.Value && aFrame % 30 == 0)
                     {
@@ -175,7 +187,7 @@ namespace StutterBegone
                         if (g != null && CountCR(g) >= _minTotalCR.Value)
                         {
                             loadingDone = true;
-                            Logger.LogInfo("[StutterBegone] no EPL signal; canvas reached threshold - assuming content loaded.");
+                            LogInfo("[StutterBegone] no EPL signal; canvas reached threshold - assuming content loaded.");
                         }
                     }
                 }
@@ -196,7 +208,7 @@ namespace StutterBegone
                     int cr = (frame % probe == 0) ? CountCR(_giant) : lastCR; // expensive, throttled
                     if (frame % probe == 0 && (cr != lastCR || cc != lastCC))
                     {
-                        Logger.LogInfo($"[StutterBegone]   building: children {lastCC}->{cc}, CanvasRenderers {lastCR}->{cr}");
+                        LogInfo($"[StutterBegone]   building: children {lastCC}->{cc}, CanvasRenderers {lastCR}->{cr}");
                         lastCR = cr; lastCC = cc; lastChangeFrame = frame;
                     }
                     else if (cc != lastCC)
@@ -359,7 +371,7 @@ namespace StutterBegone
                 if (t == null) continue;
                 if (_excluded.Contains(t.name))
                 {
-                    Logger.LogInfo($"[StutterBegone]   skip (excluded): '{t.name}'");
+                    LogInfo($"[StutterBegone]   skip (excluded): '{t.name}'");
                     skippedExcl++;
                     continue;
                 }
@@ -367,7 +379,7 @@ namespace StutterBegone
                 int sortOrder = baseSort + j;
 
                 if (t.gameObject.activeInHierarchy)
-                    Logger.LogWarning($"[StutterBegone]   NOTE: '{t.name}' is ACTIVE while being split (may cause a one-frame visual blip).");
+                    LogInfo($"[StutterBegone]   NOTE: '{t.name}' is ACTIVE while being split (may cause a one-frame visual blip).");
 
                 ReparentScreen(t, cr, sortOrder);
                 moved++;
@@ -382,7 +394,7 @@ namespace StutterBegone
             _knownCanvases = new HashSet<GameObject>();
             foreach (var c in FindObjectsOfType<Canvas>())
                 if (c != null) _knownCanvases.Add(c.gameObject);
-            Logger.LogInfo($"[StutterBegone] canvas watcher armed (ourMaxSort={_ourMaxSort}, known={_knownCanvases.Count} canvases at split); press '{_rescanKey.Value}' to rescan");
+            LogInfo($"[StutterBegone] canvas watcher armed (ourMaxSort={_ourMaxSort}, known={_knownCanvases.Count} canvases at split); press '{_rescanKey.Value}' to rescan");
         }
 
         void Update()
@@ -409,10 +421,10 @@ namespace StutterBegone
                 int newSort = Math.Clamp(_ourMaxSort + old, -32768, 32767);
                 c.sortingOrder = newSort;
                 shifted++;
-                Logger.LogInfo($"[StutterBegone]   shifted new runtime canvas '{c.gameObject.name}' sort {old} -> {newSort}");
+                LogInfo($"[StutterBegone]   shifted new runtime canvas '{c.gameObject.name}' sort {old} -> {newSort}");
             }
             sw.Stop();
-            Logger.LogInfo($"[StutterBegone] rescan: {all.Length} canvases, {shifted} new shifted, {sw.Elapsed.TotalMilliseconds:F3} ms");
+            LogInfo($"[StutterBegone] rescan: {all.Length} canvases, {shifted} new shifted, {sw.Elapsed.TotalMilliseconds:F3} ms");
         }
 
         private static bool IsRootCanvas(Canvas c)
@@ -457,7 +469,7 @@ namespace StutterBegone
 
                 screen.SetParent(go.transform, worldPositionStays: false);
                 int after = c.GetComponentsInChildren<CanvasRenderer>(true).Length;
-                Logger.LogInfo($"[StutterBegone]   REPARENT '{screen.name}' CR {cr}->{after} sort={sortOrder}  {oldPath} -> {GetPath(screen)}");
+                LogInfo($"[StutterBegone]   REPARENT '{screen.name}' CR {cr}->{after} sort={sortOrder}  {oldPath} -> {GetPath(screen)}");
             }
             catch (Exception e)
             {
@@ -482,9 +494,9 @@ namespace StutterBegone
                     rows.Add((all[i].gameObject.name, crs.Length, active));
                 }
                 rows.Sort((a, b) => b.cr - a.cr);
-                Logger.LogInfo($"[StutterBegone] CENSUS {phase}: {all.Length} canvases, {total} CanvasRenderers total, {totalActive} active");
+                LogInfo($"[StutterBegone] CENSUS {phase}: {all.Length} canvases, {total} CanvasRenderers total, {totalActive} active");
                 for (int i = 0; i < rows.Count && i < 12; i++)
-                    Logger.LogInfo($"[StutterBegone]   {phase} {rows[i].name}: {rows[i].cr} CR ({rows[i].active} active)");
+                    LogInfo($"[StutterBegone]   {phase} {rows[i].name}: {rows[i].cr} CR ({rows[i].active} active)");
             }
             catch (Exception e)
             {

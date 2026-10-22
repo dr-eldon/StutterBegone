@@ -9,6 +9,9 @@ User-facing changes only. For the full config reference, see [README](README.md)
   will be `BepInEx/config/dr.eldon.stutter.begone.cfg` — a fresh file with
   defaults, so any previous settings (in `hecrj.stutter.begone.cfg`) won't carry
   over automatically.
+- **Added:** `Verbose` option (default off). When on, logs detailed debug output
+  (per-screen reparenting, canvas census, build progress, rescan details); when off,
+  only errors and warnings are logged.
 
 ## v1.2.0
 
