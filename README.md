@@ -59,6 +59,14 @@ suspects: `RestockItemScreen_Grp`, `RestockItemAddToCartScreen`, `RestockItemChe
 
 Delete `BepInEx/plugins/StutterBegone/`. No game or mod files are modified.
 
+## Compatibility
+
+No required dependencies — StutterBegone runs on BepInEx 5 alone or alongside your other mods.
+
+Tested alongside:
+
+- [**Modded Shop Performance Fix**](https://www.nexusmods.com/tcgcardshopsimulator/mods/1909) (MSPF) v1.0.0 — no conflicts observed.
+
 ## Building
 
 ```
