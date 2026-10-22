@@ -57,7 +57,7 @@ to scan for new top-level canvases created after the split and shift each to
 `BaseSortingOrder + (top-level child count) + its own sortingOrder`, which lands it above all our
 screens while preserving the relative order among mod-created canvases.
 
-## Config (`BepInEx/config/hecrj.stutter.begone.cfg`)
+## Config (`BepInEx/config/dr.eldon.stutter.begone.cfg`)
 
 | Key | Default | Meaning |
 |---|---|---|

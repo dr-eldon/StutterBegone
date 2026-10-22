@@ -57,7 +57,7 @@ Screens listed in [font=monospace]ExcludeNames[/font] are left on the shared can
 [b][size=5]Runtime canvas watcher[/size][/b]
 Some mods build overlays at runtime (e.g. [font=monospace]Binder Overhaul[/font]'s filter/sort modal). These new canvases land [b]below[/b] the reparented screens (which sit at [font=monospace]BaseSortingOrder[/font]+), so the mod's UI ends up hidden behind a screen. Set a key in [font=monospace]RescanCanvasesKey[/font] (no default) and press it to scan for new top-level canvases created after the split and shift each to [font=monospace]BaseSortingOrder + (top-level child count) + its own sortingOrder[/font], which lands it above all our screens while preserving the relative order among mod-created canvases.
 
-[b][size=5]Config ([font=monospace]BepInEx/config/hecrj.stutter.begone.cfg[/font])[/size][/b]
+[b][size=5]Config ([font=monospace]BepInEx/config/dr.eldon.stutter.begone.cfg[/font])[/size][/b]
 [table][tr][th]Key[/th]
 [th]Default[/th]
 [th]Meaning[/th]

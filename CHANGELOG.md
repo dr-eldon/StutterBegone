@@ -2,6 +2,14 @@
 
 User-facing changes only. For the full config reference, see [README](README.md).
 
+## v1.3.0
+
+- **Breaking:** Renamed the plugin GUID prefix from `hecrj` to `dr.eldon`
+  (plugin GUID is now `dr.eldon.stutter.begone`). On next launch the config file
+  will be `BepInEx/config/dr.eldon.stutter.begone.cfg` — a fresh file with
+  defaults, so any previous settings (in `hecrj.stutter.begone.cfg`) won't carry
+  over automatically.
+
 ## v1.2.0
 
 - **Fixed:** The plugin no longer gives up waiting for content loading after a fixed time.

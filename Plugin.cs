@@ -39,7 +39,7 @@ namespace StutterBegone
     // EPL is a soft dependency: if it's installed it loads first (so Epl.IsAvailable is true
     // when we run); if it's missing we still load and fall back to canvas-size heuristics.
     [BepInDependency("EnhancedPrefabLoader", BepInDependency.DependencyFlags.SoftDependency)]
-    [BepInPlugin("hecrj.stutter.begone", "StutterBegone", "1.2.0")]
+    [BepInPlugin("dr.eldon.stutter.begone", "StutterBegone", "1.3.0")]
     public class Plugin : BaseUnityPlugin
     {
         private ConfigEntry<bool> _enabled;
